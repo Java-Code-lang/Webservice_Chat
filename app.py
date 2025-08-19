@@ -1,22 +1,27 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import json
-from sentence_transformers import SentenceTransformer, util
-import torch
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+import numpy as np
+import os
 
 app = Flask(__name__)
-CORS(app)  # Allow cross-origin requests
+CORS(app)  # Enable cross-origin requests
 
 # ---------------------------
 # Load Q&A JSON
 # ---------------------------
-with open("data.json", "r", encoding="utf-8") as f:
-    data = json.load(f)
+try:
+    with open("data.json", "r", encoding="utf-8") as f:
+        data = json.load(f)
+except FileNotFoundError:
+    data = []
 
 questions = [item['input'] for item in data]
 answers = [item['output'] for item in data]
 
-# Add generic Q&A
+# Generic Q&A
 generic_qa = [
     {"input": "hello", "output": "Hi! I'm Harsh Deep, a Python developer and tech enthusiast."},
     {"input": "hi", "output": "Hi! How can I help you today?"},
@@ -31,30 +36,30 @@ for item in generic_qa:
     answers.append(item["output"])
 
 # ---------------------------
-# Load embedding model
+# TF-IDF vectorizer for lightweight embeddings
 # ---------------------------
-model = SentenceTransformer('all-MiniLM-L6-v2')
-question_embeddings = model.encode(questions, convert_to_tensor=True)
+vectorizer = TfidfVectorizer()
+question_vectors = vectorizer.fit_transform(questions)
+SIMILARITY_THRESHOLD = 0.2  # Adjusted for TF-IDF
 
-SIMILARITY_THRESHOLD = 0.55
-
+# ---------------------------
+# Function to get answer
+# ---------------------------
 def get_answer(user_query):
-    query_embedding = model.encode(user_query, convert_to_tensor=True)
-    cos_scores = util.cos_sim(query_embedding, question_embeddings)
-    top_score, top_idx = torch.max(cos_scores, dim=1)
-    top_score = top_score.item()
-    
+    user_vec = vectorizer.transform([user_query])
+    scores = cosine_similarity(user_vec, question_vectors)
+    top_idx = np.argmax(scores)
+    top_score = scores[0][top_idx]
     if top_score >= SIMILARITY_THRESHOLD:
-        return answers[top_idx.item()]
+        return answers[top_idx]
     else:
-        # Fallback with WhatsApp link
         return ("I can assist you better on "
-        "<a href='https://wa.me/917009349232' target='_blank' "
-        "style='text-decoration: underline; display: inline-flex; align-items: center; color:white; '>"
-        "WhatsApp "
-        "<img src='https://upload.wikimedia.org/wikipedia/commons/6/6b/WhatsApp.svg' "
-        "alt='WhatsApp' style='width:24px; height:24px; margin-left:5px;'>"
-        "</a>")
+                "<a href='https://wa.me/917009349232' target='_blank' "
+                "style='text-decoration: underline; display: inline-flex; align-items: center; color:white;'>"
+                "WhatsApp "
+                "<img src='https://upload.wikimedia.org/wikipedia/commons/6/6b/WhatsApp.svg' "
+                "alt='WhatsApp' style='width:24px; height:24px; margin-left:5px;'>"
+                "</a>")
 
 # ---------------------------
 # API Route
@@ -67,5 +72,8 @@ def ask():
     return jsonify({"reply": reply})
 
 # ---------------------------
+# Run the app on Render's assigned port
+# ---------------------------
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
